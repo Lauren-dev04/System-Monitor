@@ -1,9 +1,17 @@
 # Import necessary PySide6 classes for building the UI
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QStackedWidget, QLabel
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 # Import our custom UI components
 from .sidebar import Sidebar
+from .hardware_card import HardwareCard
+
+# Import hardware monitoring functions (using absolute path from src)
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from hardware.monitor import get_cpu_info, get_gpu_info, get_ram_info, get_disk_info
 
 
 class MainWindow(QMainWindow):
@@ -44,6 +52,14 @@ class MainWindow(QMainWindow):
         # Call the method to apply the dark theme
         self.apply_dark_theme()
 
+        # Create a timer to update hardware data every 1 second (1000 milliseconds)
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_hardware_data)
+        self.update_timer.start(1000)  # Update every 1 second
+
+        # Do an initial update immediately
+        self.update_hardware_data()
+
     def create_content_pages(self):
         """Create placeholder pages for each section."""
         # Dictionary to keep track of page indices
@@ -52,14 +68,58 @@ class MainWindow(QMainWindow):
         sections = ['main', 'cpu', 'gpu', 'disk']
 
         for index, section in enumerate(sections):
-            # Create a temporary label for each section
-            label = QLabel(f"Vista de {section.upper()} (Próximamente)")
-            label.setAlignment(Qt.AlignCenter)
-            label.setStyleSheet("color: #888; font-size: 18px;")
+            if section == 'main':
+                # Create a container widget for the main view cards
+                main_container = QWidget()
+                main_layout = QHBoxLayout(main_container)
+                main_layout.setContentsMargins(30, 30, 30, 30)
+                main_layout.setSpacing(20)
 
-            # Add the label to the stacked widget
-            self.content_stack.addWidget(label)
+                # Create the hardware cards
+                self.cpu_card = HardwareCard("CPU")
+                self.gpu_card = HardwareCard("GPU")
+                self.ram_card = HardwareCard("RAM")
+                self.disk_card = HardwareCard("DISK")
+
+                # Add cards to the layout (with stretch on both sides to center them)
+                main_layout.addStretch() # Left spacer
+                main_layout.addWidget(self.cpu_card)
+                main_layout.addWidget(self.gpu_card)
+                main_layout.addWidget(self.ram_card)
+                main_layout.addWidget(self.disk_card)
+                main_layout.addStretch() # Right spacer
+
+                # Add the container to the stacked widget
+                self.content_stack.addWidget(main_container)
+            else:
+                # Create a temporary label for other sections
+                label = QLabel(f"{section.upper()} View - Coming Soon")
+                label.setAlignment(Qt.AlignCenter)
+                label.setStyleSheet("color: #888; font-size: 18px;")
+
+                # Add the label to the stacked widget
+                self.content_stack.addWidget(label)
+
             self.page_indices[section] = index
+
+    def update_hardware_data(self):
+        """Fetch hardware data and update the cards."""
+
+        # Get CPU data and update the card
+        cpu_data = get_cpu_info()
+        self.cpu_card.update_data(cpu_data['usage'], cpu_data['temp'])
+
+        # Get GPU data and update the card
+        gpu_data = get_gpu_info()
+        self.gpu_card.update_data(gpu_data['usage'], gpu_data['temp'])
+
+        # Get RAM data and update the card
+        ram_data = get_ram_info()
+        self.ram_card.update_data(ram_data['percent'], None)  # RAM typically doesn't have temp
+
+        # Get Disk data and update the card
+        disk_data = get_disk_info()
+        self.disk_card.update_data(disk_data['percent'], None)  # Disk typically doesn't have temp
 
     def switch_page(self, page_name):
         """Switch the visible page in the stacked widget."""

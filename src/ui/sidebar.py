@@ -1,6 +1,7 @@
 # Import Qt widgets and styles for building the sidebar
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QSizePolicy
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QSizePolicy, QStyle
+from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import QIcon
 
 
 class Sidebar(QWidget):
@@ -36,10 +37,10 @@ class Sidebar(QWidget):
 
         # Define buttons: (name, icon_type, tooltip)
         self.buttons_config = [
-            ("main", None, "Main Overview"),
-            ("cpu", None, "CPU Details"),
-            ("gpu", None, "GPU Details"),
-            ("disk", None, "Disk Usage"),
+            ("main", QStyle.SP_ComputerIcon, "Main Overview"),
+            ("cpu", QStyle.SP_BrowserReload, "CPU Details"),
+            ("gpu", QStyle.SP_DesktopIcon, "GPU Details"),
+            ("disk", QStyle.SP_DriveHDIcon, "Disk Usage"),
         ]
 
         # Create a button for each configuration
@@ -50,6 +51,13 @@ class Sidebar(QWidget):
             button.setToolTip(tooltip)
             button.setProperty("name", name)
             button.setCheckable(True)
+            button.setText("")  # No text, icon only
+
+            # Get the standard icon from the system style
+            style = self.style()
+            standard_icon = style.standardIcon(icon_type)
+            button.setIcon(standard_icon)
+            button.setIconSize(QSize(32, 32))
 
             # Connect button click to signal
             button.clicked.connect(lambda checked, n=name: self.on_button_clicked(n))
@@ -81,8 +89,6 @@ class Sidebar(QWidget):
                 border: none;
                 border-radius: 8px;
                 color: #e0e0e0;
-                font-size: 12px;
-                font-weight: bold;
             }
             QPushButton:hover {
                 background-color: #2a2a2a;
