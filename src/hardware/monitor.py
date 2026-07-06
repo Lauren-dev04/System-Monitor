@@ -3,6 +3,7 @@ import psutil
 # Import os and glob to read system files for GPU info
 import os
 import glob
+import time
 
 
 def get_cpu_info():
@@ -50,6 +51,133 @@ def get_cpu_info():
         'usage': cpu_usage,
         'temp': cpu_temp,
         'model': cpu_model
+    }
+
+
+def get_cpu_detailed_info():
+    """Get detailed per-core CPU info: usage, frequency, temperature, VCore, cache sizes, uptime.
+
+    All values are read from real sensors/sysfs. If a value isn't available on this
+    hardware (e.g. VCore voltage), it's returned as None so the UI can show N/A
+    instead of a fabricated number.
+    """
+
+    # --- Per-core usage (real, psutil) ---
+    per_core_usage = psutil.cpu_percent(interval=0.3, percpu=True)
+    overall_usage = sum(per_core_usage) / len(per_core_usage) if per_core_usage else 0
+
+    # --- Per-core frequency (real, psutil; falls back to overall freq if percpu unsupported) ---
+    per_core_freq = []
+    try:
+        freqs = psutil.cpu_freq(percpu=True)
+        if freqs:
+            per_core_freq = [f.current for f in freqs]
+    except Exception:
+        pass
+    if not per_core_freq:
+        try:
+            f = psutil.cpu_freq()
+            if f:
+                per_core_freq = [f.current] * len(per_core_usage)
+        except Exception:
+            pass
+
+    # --- Per-core temperature (real, coretemp/k10temp labels like "Core 0") ---
+    per_core_temp = {}
+    avg_temp = None
+    try:
+        temps = psutil.sensors_temperatures()
+        if temps:
+            source = temps.get('coretemp') or temps.get('k10temp')
+            if source:
+                core_temps = []
+                for entry in source:
+                    label = (entry.label or "").lower()
+                    if 'core' in label:
+                        try:
+                            core_num = int(label.replace('core', '').strip())
+                            per_core_temp[core_num] = entry.current
+                            core_temps.append(entry.current)
+                        except ValueError:
+                            pass
+                    elif 'package' in label or 'tctl' in label or 'tdie' in label:
+                        avg_temp = entry.current
+
+                if avg_temp is None:
+                    if core_temps:
+                        avg_temp = sum(core_temps) / len(core_temps)
+                    else:
+                        avg_temp = source[0].current
+    except Exception:
+        pass
+
+    # --- VCore voltage (real, auto-detected from hwmon; None if not exposed by hardware) ---
+    vcore = None
+    try:
+        for hwmon_path in glob.glob('/sys/class/hwmon/hwmon*'):
+            for label_file in glob.glob(os.path.join(hwmon_path, 'in*_label')):
+                try:
+                    with open(label_file, 'r') as f:
+                        label = f.read().strip().lower()
+                except Exception:
+                    continue
+
+                if 'vcore' in label:
+                    input_file = label_file.replace('_label', '_input')
+                    if os.path.exists(input_file):
+                        with open(input_file, 'r') as f:
+                            # hwmon voltage values are in millivolts
+                            vcore = int(f.read().strip()) / 1000.0
+                    break
+            if vcore is not None:
+                break
+    except Exception:
+        pass
+
+    # --- Cache sizes only (real, from sysfs; no hit rate since that needs perf/root) ---
+    cache_sizes = {}
+    try:
+        cache_base = '/sys/devices/system/cpu/cpu0/cache'
+        if os.path.isdir(cache_base):
+            for index_dir in sorted(glob.glob(os.path.join(cache_base, 'index*'))):
+                level_file = os.path.join(index_dir, 'level')
+                type_file = os.path.join(index_dir, 'type')
+                size_file = os.path.join(index_dir, 'size')
+                if os.path.exists(level_file) and os.path.exists(size_file):
+                    with open(level_file) as f:
+                        level = f.read().strip()
+                    cache_type = ""
+                    if os.path.exists(type_file):
+                        with open(type_file) as f:
+                            cache_type = f.read().strip()
+                    with open(size_file) as f:
+                        size = f.read().strip()
+
+                    key = f"l{level}"
+                    if cache_type == "Data":
+                        key += "d"
+                    elif cache_type == "Instruction":
+                        key += "i"
+                    cache_sizes[key] = size
+    except Exception:
+        pass
+
+    # --- Uptime (real, psutil) ---
+    uptime_seconds = 0
+    try:
+        uptime_seconds = int(time.time() - psutil.boot_time())
+    except Exception:
+        pass
+
+    return {
+        'per_core_usage': per_core_usage,
+        'overall_usage': overall_usage,
+        'per_core_freq': per_core_freq,
+        'per_core_temp': per_core_temp,
+        'avg_temp': avg_temp,
+        'vcore': vcore,
+        'cache_sizes': cache_sizes,
+        'uptime_seconds': uptime_seconds,
     }
 
 
@@ -297,6 +425,56 @@ def get_top_processes(count=5):
     except Exception:
         return []
 
+
+# Cache of psutil.Process objects, kept alive between calls so cpu_percent()
+# can report a real delta instead of always returning 0.0 on a fresh object.
+_process_cache = {}
+
+
+def get_detailed_processes(count=8):
+    """Get top processes with CPU%, memory, thread count and status (real-time, non-blocking).
+
+    Uses a persistent Process object cache instead of interval sleeps, so it's
+    cheap enough to call every monitoring cycle.
+    """
+    global _process_cache
+    current_pids = set()
+    results = []
+
+    for proc in psutil.process_iter(['pid', 'name', 'memory_info', 'num_threads', 'status']):
+        try:
+            pid = proc.info['pid']
+            current_pids.add(pid)
+
+            if pid not in _process_cache:
+                _process_cache[pid] = proc
+                proc.cpu_percent(None)  # Prime the measurement, skip this cycle
+                continue
+
+            cached_proc = _process_cache[pid]
+            cpu_pct = cached_proc.cpu_percent(None)
+            info = proc.info
+
+            if info['name']:
+                results.append({
+                    'name': info['name'],
+                    'cpu_percent': round(cpu_pct, 1),
+                    'memory_mb': round(info['memory_info'].rss / (1024 ** 2), 1) if info['memory_info'] else 0,
+                    'threads': info['num_threads'],
+                    'status': info['status']
+                })
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+
+    # Clean up cache entries for processes that no longer exist
+    dead_pids = set(_process_cache.keys()) - current_pids
+    for pid in dead_pids:
+        del _process_cache[pid]
+
+    results.sort(key=lambda x: x['cpu_percent'], reverse=True)
+    return results[:count]
+
+
 def get_fan_info():
     """Get fan speeds in RPM from system sensors."""
 
@@ -354,6 +532,20 @@ if __name__ == "__main__":
 
     print("")  # Empty line separator
 
+    # Test detailed CPU info
+    print("Testing detailed CPU info...")
+    detail = get_cpu_detailed_info()
+    print(f"Per-core usage: {detail['per_core_usage']}")
+    print(f"Overall usage:  {detail['overall_usage']:.1f}%")
+    print(f"Per-core freq:  {detail['per_core_freq']}")
+    print(f"Per-core temp:  {detail['per_core_temp']}")
+    print(f"Avg temp:       {detail['avg_temp']}")
+    print(f"VCore:          {detail['vcore']}")
+    print(f"Cache sizes:    {detail['cache_sizes']}")
+    print(f"Uptime (s):     {detail['uptime_seconds']}")
+
+    print("")  # Empty line separator
+
     #test Fan info
     print("Testing Fan info...")
     fans = get_fan_info()
@@ -398,3 +590,15 @@ if __name__ == "__main__":
     top_procs = get_top_processes(5)
     for i, proc in enumerate(top_procs, 1):
         print(f"{i}. {proc['name']}: {proc['memory_mb']} MB")
+
+    print("")  # Empty line separator
+
+    # Test Detailed Processes (call twice, second call has real CPU% deltas)
+    print("Testing Detailed Processes (CPU%)...")
+    get_detailed_processes(8)
+    import time as _t
+    _t.sleep(1)
+    detailed_procs = get_detailed_processes(8)
+    for i, proc in enumerate(detailed_procs, 1):
+        print(f"{i}. {proc['name']}: {proc['cpu_percent']}% CPU, {proc['memory_mb']} MB, "
+              f"{proc['threads']} threads, {proc['status']}")

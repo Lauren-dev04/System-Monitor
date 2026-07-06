@@ -1,18 +1,21 @@
 # Import Qt widgets for building the hardware card
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QProgressBar, QListWidget, QListWidgetItem
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, QEvent
 from .fan_widget import FanWidget
 from .neon_icon import NeonIconWidget
-
 
 class HardwareCard(QWidget):
     """Reusable card widget to display hardware usage and temperature."""
 
-    def __init__(self, title, model="", mode="standard", icon_type=None):
-        super().__init__()
+    # Signal emitted when the card is clicked (sends the target page name)
+    card_clicked = Signal(str)
 
+    def __init__(self, title, model="", mode="standard", icon_type=None, click_target=None):
+        super().__init__()
         self.mode = mode
+        self.click_target = click_target
         self.current_bg_color = "#2a2a2a"
+        self.is_hovering = False
 
         # Set fixed size for all cards (same dimensions)
         self.setFixedSize(250, 345)
@@ -23,7 +26,7 @@ class HardwareCard(QWidget):
         main_layout.setSpacing(0)
         self.setLayout(main_layout)
 
-        # Create a QFrame as the card container (this will have the background)
+        # Create a QFrame as the card container
         self.card_frame = QFrame()
         self.card_frame.setObjectName("card_frame")
         self.card_frame.setStyleSheet("""
@@ -48,17 +51,13 @@ class HardwareCard(QWidget):
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setWordWrap(True)
         self.title_label.setMaximumHeight(50)
-
         if mode == "temp_only":
             self.title_label.setStyleSheet("font-size: 11px; font-weight: bold; color: #888;")
         else:
             self.title_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #4a9eff;")
-
         self.card_layout.addWidget(self.title_label)
 
-        # Create all widgets first (before adding to layout)
-
-        # Progress Bar (standard and usage_only modes)
+        # Progress Bar
         if mode in ["standard", "usage_only"]:
             self.progress_bar = QProgressBar()
             self.progress_bar.setRange(0, 100)
@@ -82,15 +81,17 @@ class HardwareCard(QWidget):
         else:
             self.progress_bar = None
 
-        # Neon icon for main display
+        # Neon icon
         if icon_type and mode != "processes":
             self.neon_icon = NeonIconWidget(icon_type)
+            self.neon_icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         else:
             self.neon_icon = None
 
-        # Second icon for temp_only mode (fire/drop based on temperature)
+        # Second icon for temp_only
         if mode == "temp_only":
             self.bottom_temp_icon = NeonIconWidget("drop", color="#4a9eff")
+            self.bottom_temp_icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         else:
             self.bottom_temp_icon = None
 
@@ -102,7 +103,7 @@ class HardwareCard(QWidget):
         else:
             self.temp_label = None
 
-        # RPM Label (for temp_only mode)
+        # RPM Label
         if mode == "temp_only":
             self.rpm_label = QLabel("0 RPM")
             self.rpm_label.setAlignment(Qt.AlignCenter)
@@ -110,7 +111,7 @@ class HardwareCard(QWidget):
         else:
             self.rpm_label = None
 
-        # Process List (processes mode only)
+        # Process List
         if mode == "processes":
             self.process_list = QListWidget()
             self.process_list.setStyleSheet("""
@@ -124,17 +125,12 @@ class HardwareCard(QWidget):
                     padding: 4px;
                     border-bottom: 1px solid #3a3a3a;
                 }
-                QListWidget::item:last-child {
-                    border-bottom: none;
-                }
             """)
         else:
             self.process_list = None
 
-        # Now add widgets to layout in correct order
-
+        # Layout Logic
         if mode == "temp_only":
-            # Layout: Title -> Space -> Fan Icon -> RPM -> Temp -> Bottom Icon -> Stretch
             self.card_layout.addSpacing(2.5)
             self.card_layout.addWidget(self.neon_icon, alignment=Qt.AlignCenter)
             self.card_layout.addSpacing(20)
@@ -144,60 +140,89 @@ class HardwareCard(QWidget):
             self.card_layout.addWidget(self.bottom_temp_icon, alignment=Qt.AlignCenter)
             self.card_layout.addSpacing(10)
         elif mode in ["standard", "usage_only"]:
-            # Layout: Title -> Stretch -> Icon -> Stretch -> Usage -> Bar
             if self.neon_icon:
                 self.card_layout.addStretch()
                 self.card_layout.addWidget(self.neon_icon, alignment=Qt.AlignCenter)
                 self.card_layout.addStretch()
-
-            # Usage label
             usage_label = QLabel("Usage")
             usage_label.setStyleSheet("font-size: 10px; color: #888;")
             usage_label.setAlignment(Qt.AlignLeft)
             self.card_layout.addWidget(usage_label)
             self.card_layout.addWidget(self.progress_bar)
         elif mode == "processes":
-            # Layout: Title -> Icon -> Process List
             if self.neon_icon:
                 self.card_layout.addWidget(self.neon_icon, alignment=Qt.AlignCenter)
             self.card_layout.addWidget(self.process_list)
         else:
-            # Standard mode with temp
             if self.neon_icon:
                 self.card_layout.addStretch()
                 self.card_layout.addWidget(self.neon_icon, alignment=Qt.AlignCenter)
                 self.card_layout.addStretch()
             self.card_layout.addWidget(self.temp_label)
 
+        # Event filters for clicks
+        self.card_frame.installEventFilter(self)
+        for child in self.card_frame.findChildren(QWidget):
+            child.installEventFilter(self)
+
+    # --- HOVER ANIMATION METHODS ---
+    def enterEvent(self, event):
+        """Called when mouse enters the card."""
+        self.is_hovering = True
+        # Grow the card slightly
+        #self.setFixedSize(260, 355)
+        # Add neon glow border
+        self.card_frame.setStyleSheet("""
+            #card_frame {
+                background-color: #2a2a2a;
+                border-radius: 10px;
+                border: 2px solid #4a9eff;
+            }
+        """)
+        # Notify icon to start animation
+        if self.neon_icon:
+            self.neon_icon.set_hover(True)
+        if self.bottom_temp_icon:
+            self.bottom_temp_icon.set_hover(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """Called when mouse leaves the card."""
+        self.is_hovering = False
+        # Shrink back to original size
+        #self.setFixedSize(250, 345)
+        # Remove neon border
+        self.card_frame.setStyleSheet("""
+            #card_frame {
+                background-color: #2a2a2a;
+                border-radius: 10px;
+                border: 1px solid #3a3a3a;
+            }
+        """)
+        # Notify icon to stop animation
+        if self.neon_icon:
+            self.neon_icon.set_hover(False)
+        if self.bottom_temp_icon:
+            self.bottom_temp_icon.set_hover(False)
+        super().leaveEvent(event)
+
+    # --- DATA UPDATE METHODS ---
     def update_data(self, usage, temp, model=""):
         """Update the card with new data."""
-
-        # Update model name (standard and usage_only modes)
         if model and self.mode in ["standard", "usage_only"]:
             self.title_label.setText(model)
-
-        # Update progress bar
         if self.progress_bar is not None:
             self.progress_bar.setValue(int(usage))
-
-        # Update temperature
         if self.temp_label is not None:
             if temp is not None:
                 self.temp_label.setText(f"{temp:.1f}°C")
-                self.temp_label.show()  # Show if we have temp
-
-                # ONLY apply background color for temp_only mode
+                self.temp_label.show()
                 if self.mode == "temp_only":
-                    if temp < 50:
-                        bg_color = "#1a3a5c"  # Blue (Cool)
-                    elif temp < 70:
-                        bg_color = "#5c4a1a"  # Yellow/Orange (Warm)
-                    else:
-                        bg_color = "#5c1a1a"  # Red (Hot)
-
+                    if temp < 50: bg_color = "#1a3a5c"
+                    elif temp < 70: bg_color = "#5c4a1a"
+                    else: bg_color = "#5c1a1a"
                     self._apply_background(bg_color)
             else:
-                # Hide the temp label if no temperature data
                 self.temp_label.hide()
 
     def update_processes(self, processes):
@@ -222,15 +247,12 @@ class HardwareCard(QWidget):
         """Change bottom icon color and type based on temperature."""
         if self.bottom_temp_icon is not None and temp is not None:
             if temp < 50:
-                # Cool - show drop icon in blue
                 self.bottom_temp_icon.icon_type = "drop"
                 self.bottom_temp_icon.set_color("#4a9eff")
             elif temp < 70:
-                # Warm - show drop icon in orange
                 self.bottom_temp_icon.icon_type = "drop"
                 self.bottom_temp_icon.set_color("#ffaa00")
             else:
-                # Hot - show fire icon in red
                 self.bottom_temp_icon.icon_type = "fire"
                 self.bottom_temp_icon.set_color("#ff4444")
 
@@ -244,3 +266,16 @@ class HardwareCard(QWidget):
                 border: 1px solid #3a3a3a;
             }}
         """)
+
+    def mousePressEvent(self, event):
+        """Handle mouse click to emit the card_clicked signal."""
+        if self.click_target:
+            self.card_clicked.emit(self.click_target)
+        super().mousePressEvent(event)
+
+    def eventFilter(self, obj, event):
+        """Intercept mouse clicks on child widgets."""
+        if event.type() == QEvent.MouseButtonPress:
+            self.mousePressEvent(event)
+            return True
+        return super().eventFilter(obj, event)

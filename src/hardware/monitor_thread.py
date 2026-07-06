@@ -3,7 +3,8 @@ from PySide6.QtCore import QThread, Signal
 
 # Import hardware monitoring functions
 from .monitor import (get_cpu_info, get_gpu_info, get_ram_info,
-                      get_all_disks_info, get_top_processes, get_fan_info)
+                      get_all_disks_info, get_top_processes, get_fan_info,
+                      get_cpu_detailed_info, get_detailed_processes)
 
 
 class MonitorThread(QThread):
@@ -16,6 +17,10 @@ class MonitorThread(QThread):
     disks_data = Signal(list)
     fans_data = Signal(dict)
     processes_data = Signal(list)
+
+    # New signals for the detailed CPU view
+    cpu_detail_data = Signal(dict)
+    processes_detail_data = Signal(list)
 
     def __init__(self):
         super().__init__()
@@ -34,6 +39,13 @@ class MonitorThread(QThread):
                 self.cpu_data.emit(cpu_info)
             except Exception as e:
                 print(f"Error collecting CPU data: {e}")
+
+            # Collect and emit detailed CPU data (per-core usage/temp/freq, vcore, cache)
+            try:
+                cpu_detail = get_cpu_detailed_info()
+                self.cpu_detail_data.emit(cpu_detail)
+            except Exception as e:
+                print(f"Error collecting detailed CPU data: {e}")
 
             # Collect and emit GPU data
             try:
@@ -63,7 +75,15 @@ class MonitorThread(QThread):
             except Exception as e:
                 print(f"Error collecting fans data: {e}")
 
-            # Update processes every 5 seconds (less frequent, more expensive)
+            # Collect and emit detailed processes (CPU%, threads, status) every cycle
+            # (cheap: no sleep, uses a persistent Process cache internally)
+            try:
+                processes_detail = get_detailed_processes(8)
+                self.processes_detail_data.emit(processes_detail)
+            except Exception as e:
+                print(f"Error collecting detailed processes data: {e}")
+
+            # Update simple top-5-by-memory processes every 5 seconds (less frequent)
             process_counter += 1
             if process_counter >= 5:
                 try:
