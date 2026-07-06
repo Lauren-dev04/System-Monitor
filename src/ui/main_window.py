@@ -1,143 +1,245 @@
 # Import necessary PySide6 classes for building the UI
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QStackedWidget, QLabel
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QLabel, QGridLayout
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QPalette, QBrush, QColor, QPixmap, QPainter, QPen
 
 # Import our custom UI components
 from .sidebar import Sidebar
 from .hardware_card import HardwareCard
 
-# Import hardware monitoring functions (using absolute path from src)
+# Import hardware monitoring functions
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from hardware.monitor import get_cpu_info, get_gpu_info, get_ram_info, get_disk_info
+from hardware.monitor_thread import MonitorThread
 
 
 class MainWindow(QMainWindow):
     """Main application window for the System Monitor."""
 
     def __init__(self):
-        # Initialize the parent class (QMainWindow) to inherit its properties
         super().__init__()
-
-        # Set window title and initial dimensions (width, height)
         self.setWindowTitle("System Monitor")
-        self.resize(900, 600)
+        self.resize(1200, 700)
+        self.process_update_counter = 0
 
-        # Create a central widget to hold the main layout
+        # Create central widget
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
-        # Create a horizontal layout to place sidebar and content side by side
+        # Main horizontal layout (sidebar + content)
         self.main_layout = QHBoxLayout(self.central_widget)
-        self.main_layout.setContentsMargins(0, 0, 0, 0) # Remove margins
-        self.main_layout.setSpacing(0) # Remove spacing between widgets
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
 
-        # Create and add the Sidebar to the left
+        # Sidebar
         self.sidebar = Sidebar()
         self.main_layout.addWidget(self.sidebar)
 
-        # Create a QStackedWidget to hold the different content pages
+        # Content area
         self.content_stack = QStackedWidget()
         self.main_layout.addWidget(self.content_stack)
 
-        # Connect the sidebar signal to the page switching method
+        # Connect sidebar signal
         self.sidebar.button_clicked.connect(self.switch_page)
 
-        # Create the content pages and show the default one
+        # Create pages
         self.create_content_pages()
         self.switch_page('main')
 
-        # Call the method to apply the dark theme
+        # Apply theme with pattern
         self.apply_dark_theme()
 
-        # Create a timer to update hardware data every 1 second (1000 milliseconds)
-        self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self.update_hardware_data)
-        self.update_timer.start(1000)  # Update every 1 second
+        # background thread for hardware monitoring (non-blocking)
+        self.monitor_thread = MonitorThread()
 
-        # Do an initial update immediately
-        self.update_hardware_data()
+        # Connect signals to slots
+        self.monitor_thread.cpu_data.connect(self.on_cpu_data)
+        self.monitor_thread.gpu_data.connect(self.on_gpu_data)
+        self.monitor_thread.ram_data.connect(self.on_ram_data)
+        self.monitor_thread.disks_data.connect(self.on_disks_data)
+        self.monitor_thread.fans_data.connect(self.on_fans_data)
+        self.monitor_thread.processes_data.connect(self.on_processes_data)
+
+        # Start the background thread
+        self.monitor_thread.start()
 
     def create_content_pages(self):
-        """Create placeholder pages for each section."""
-        # Dictionary to keep track of page indices
+        """Create content pages."""
         self.page_indices = {}
 
         sections = ['main', 'cpu', 'gpu', 'disk']
 
         for index, section in enumerate(sections):
             if section == 'main':
-                # Create a container widget for the main view cards
+                # Create main view container with pattern background
                 main_container = QWidget()
-                main_layout = QHBoxLayout(main_container)
+
+                # Apply pattern background to this container
+                pattern_pixmap = self.create_circuit_pattern()
+                palette = QPalette()
+                palette.setBrush(QPalette.Window, QBrush(pattern_pixmap))
+                main_container.setPalette(palette)
+                main_container.setAutoFillBackground(True)
+
+                main_layout = QVBoxLayout(main_container)
                 main_layout.setContentsMargins(30, 30, 30, 30)
-                main_layout.setSpacing(20)
+                main_layout.setSpacing(15)
 
-                # Create the hardware cards
-                self.cpu_card = HardwareCard("CPU")
-                self.gpu_card = HardwareCard("GPU")
-                self.ram_card = HardwareCard("RAM")
-                self.disk_card = HardwareCard("DISK")
+                # Create grid layout for 2 rows x 4 columns
+                grid_layout = QGridLayout()
+                grid_layout.setSpacing(15)
 
-                # Add cards to the layout (with stretch on both sides to center them)
-                main_layout.addStretch() # Left spacer
-                main_layout.addWidget(self.cpu_card)
-                main_layout.addWidget(self.gpu_card)
-                main_layout.addWidget(self.ram_card)
-                main_layout.addWidget(self.disk_card)
-                main_layout.addStretch() # Right spacer
+                # ROW 0: Standard cards
+                card_cpu = HardwareCard("CPU", mode="usage_only", icon_type="cpu")
+                card_gpu = HardwareCard("GPU", mode="usage_only", icon_type="gpu")
+                card_ram = HardwareCard("RAM", mode="standard", icon_type="ram")
+                card_disk1 = HardwareCard("DISK 1", mode="standard", icon_type="disk")
 
-                # Add the container to the stacked widget
+                grid_layout.addWidget(card_cpu, 0, 0)
+                grid_layout.addWidget(card_gpu, 0, 1)
+                grid_layout.addWidget(card_ram, 0, 2)
+                grid_layout.addWidget(card_disk1, 0, 3)
+
+                # ROW 1: Specialized cards
+                card_cpu_temp = HardwareCard("CPU Temperature", mode="temp_only", icon_type="fan")
+                card_gpu_temp = HardwareCard("GPU Temperature", mode="temp_only", icon_type="fan")
+                card_processes = HardwareCard("Top 5 Processes", mode="processes", icon_type="processes")
+                card_disk2 = HardwareCard("DISK 2", mode="standard", icon_type="disk")
+
+                grid_layout.addWidget(card_cpu_temp, 1, 0)
+                grid_layout.addWidget(card_gpu_temp, 1, 1)
+                grid_layout.addWidget(card_processes, 1, 2)
+                grid_layout.addWidget(card_disk2, 1, 3)
+
+                main_layout.addLayout(grid_layout)
+
                 self.content_stack.addWidget(main_container)
+
+                # Store references
+                self.cards = {
+                    'cpu': card_cpu,
+                    'gpu': card_gpu,
+                    'ram': card_ram,
+                    'disk1': card_disk1,
+                    'cpu_temp': card_cpu_temp,
+                    'gpu_temp': card_gpu_temp,
+                    'processes': card_processes,
+                    'disk2': card_disk2
+                }
             else:
-                # Create a temporary label for other sections
+                # Create page container
+                page_container = QWidget()
+                page_container.setAutoFillBackground(True)
+                pattern_pixmap = self.create_circuit_pattern()
+                palette = QPalette()
+                palette.setBrush(QPalette.Window, QBrush(pattern_pixmap))
+                page_container.setPalette(palette)
+
+                page_layout = QVBoxLayout(page_container)
                 label = QLabel(f"{section.upper()} View - Coming Soon")
                 label.setAlignment(Qt.AlignCenter)
                 label.setStyleSheet("color: #888; font-size: 18px;")
+                page_layout.addWidget(label)
 
-                # Add the label to the stacked widget
-                self.content_stack.addWidget(label)
+                self.content_stack.addWidget(page_container)
 
             self.page_indices[section] = index
 
-    def update_hardware_data(self):
-        """Fetch hardware data and update the cards."""
+    def on_cpu_data(self, cpu_info):
+        """Handle CPU data received from the background thread."""
+        self.cards['cpu'].update_data(cpu_info['usage'], cpu_info['temp'], model=cpu_info['model'])
+        self.cards['cpu_temp'].update_data(0, cpu_info['temp'])
+        self.cards['cpu_temp'].update_temp_icon_color(cpu_info['temp'])
 
-        # Get CPU data and update the card
-        cpu_data = get_cpu_info()
-        self.cpu_card.update_data(cpu_data['usage'], cpu_data['temp'])
+    def on_gpu_data(self, gpu_info):
+        """Handle GPU data received from the background thread."""
+        self.cards['gpu'].update_data(gpu_info['usage'], gpu_info['temp'], model=gpu_info['model'])
+        self.cards['gpu_temp'].update_data(0, gpu_info['temp'])
+        self.cards['gpu_temp'].update_temp_icon_color(gpu_info['temp'])
 
-        # Get GPU data and update the card
-        gpu_data = get_gpu_info()
-        self.gpu_card.update_data(gpu_data['usage'], gpu_data['temp'])
+    def on_ram_data(self, ram_info):
+        """Handle RAM data received from the background thread."""
+        self.cards['ram'].update_data(ram_info['percent'], None, model=ram_info['model'])
 
-        # Get RAM data and update the card
-        ram_data = get_ram_info()
-        self.ram_card.update_data(ram_data['percent'], None)  # RAM typically doesn't have temp
+    def on_disks_data(self, disks_info):
+        """Handle disks data received from the background thread."""
+        if len(disks_info) >= 1:
+            self.cards['disk1'].update_data(disks_info[0]['percent'], None, model=disks_info[0]['model'])
+        if len(disks_info) >= 2:
+            self.cards['disk2'].update_data(disks_info[1]['percent'], None, model=disks_info[1]['model'])
 
-        # Get Disk data and update the card
-        disk_data = get_disk_info()
-        self.disk_card.update_data(disk_data['percent'], None)  # Disk typically doesn't have temp
+    def on_fans_data(self, fans_info):
+        """Handle fan data received from the background thread."""
+        self.cards['cpu_temp'].update_fan_rpm(fans_info['cpu_fan_rpm'])
+        self.cards['gpu_temp'].update_fan_rpm(fans_info['gpu_fan_rpm'])
+
+    def on_processes_data(self, processes_info):
+        """Handle processes data received from the background thread."""
+        self.cards['processes'].update_processes(processes_info)
 
     def switch_page(self, page_name):
-        """Switch the visible page in the stacked widget."""
+        """Switch visible page."""
         if page_name in self.page_indices:
-            # Change the current index of the stacked widget
             self.content_stack.setCurrentIndex(self.page_indices[page_name])
 
-    def apply_dark_theme(self):
-        """Apply a minimalist dark theme using Qt Style Sheets (QSS)."""
+    def create_circuit_pattern(self):
+        """Create a subtle circuit/tech pattern as background."""
+        # Create a pixmap for the pattern
+        pattern_size = 100
+        pixmap = QPixmap(pattern_size, pattern_size)
+        pixmap.fill(QColor("#1a1a1a"))
 
-        # Define CSS-like styles for the window and widgets
-        dark_theme_qss = """
-            QMainWindow, QWidget {
-                background-color: #1e1e1e;  /* Dark gray background */
-                color: #e0e0e0;             /* Light gray text */
+        # Create painter
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Draw subtle circuit lines
+        pen = QPen(QColor("#252525"), 1)
+        painter.setPen(pen)
+
+        # Draw horizontal lines
+        painter.drawLine(0, 25, 100, 25)
+        painter.drawLine(0, 75, 100, 75)
+
+        # Draw vertical lines
+        painter.drawLine(25, 0, 25, 100)
+        painter.drawLine(75, 0, 75, 100)
+
+        # Draw some "circuit" elements (small squares/dots)
+        painter.setBrush(QColor("#2a2a2a"))
+        painter.drawRect(23, 23, 4, 4)
+        painter.drawRect(73, 23, 4, 4)
+        painter.drawRect(23, 73, 4, 4)
+        painter.drawRect(73, 73, 4, 4)
+
+        # Draw diagonal lines for tech feel
+        painter.drawLine(10, 10, 20, 20)
+        painter.drawLine(80, 80, 90, 90)
+
+        painter.end()
+
+        return pixmap
+
+    def apply_dark_theme(self):
+        """Apply dark theme with circuit pattern background."""
+
+        # Apply base stylesheet
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #1a1a1a;
+            }
+            QWidget {
+                color: #e0e0e0;
                 font-family: 'Ubuntu', 'Segoe UI', sans-serif;
             }
-        """
+        """)
 
-        # Apply the stylesheet to the entire window
-        self.setStyleSheet(dark_theme_qss)
+    def closeEvent(self, event):
+        """Stop the monitoring thread when the window is closed."""
+
+        if hasattr(self, 'monitor_thread'):
+            self.monitor_thread.stop()
+            self.monitor_thread.wait()
+        event.accept()
