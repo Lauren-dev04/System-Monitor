@@ -6,6 +6,9 @@ from PySide6.QtGui import QPalette, QBrush, QColor, QPixmap, QPainter, QPen
 # Import our custom UI components
 from .hardware_card import HardwareCard
 from .cpu_detail_view import CpuDetailView
+from .gpu_detail_view import GpuDetailView
+from .ram_detail_view import RamDetailView
+from .disk_detail_view import DiskDetailView
 
 # Import hardware monitoring functions
 import sys
@@ -54,8 +57,11 @@ class MainWindow(QMainWindow):
         self.monitor_thread.fans_data.connect(self.on_fans_data)
         self.monitor_thread.processes_data.connect(self.on_processes_data)
 
-        # Connect new signals for the detailed CPU view
+        # Connect new signals for the detailed views
         self.monitor_thread.cpu_detail_data.connect(self.cpu_detail_view.update_cpu_detail)
+        self.monitor_thread.gpu_detail_data.connect(self.gpu_detail_view.update_gpu_detail)
+        self.monitor_thread.ram_detail_data.connect(self.ram_detail_view.update_ram_detail)
+        self.monitor_thread.disk_detail_data.connect(self.disk_detail_view.update_disk_detail)
         self.monitor_thread.processes_detail_data.connect(self.cpu_detail_view.update_processes)
 
         # Start the background thread
@@ -88,13 +94,10 @@ class MainWindow(QMainWindow):
                 # ROW 0: Standard cards (Clickable)
                 card_cpu = HardwareCard("CPU", mode="usage_only", icon_type="cpu", click_target="cpu")
                 card_cpu.card_clicked.connect(self.switch_page)
-
                 card_gpu = HardwareCard("GPU", mode="usage_only", icon_type="gpu", click_target="gpu")
                 card_gpu.card_clicked.connect(self.switch_page)
-
                 card_ram = HardwareCard("RAM", mode="standard", icon_type="ram", click_target="ram")
                 card_ram.card_clicked.connect(self.switch_page)
-
                 card_disk1 = HardwareCard("DISK 1", mode="standard", icon_type="disk", click_target="disk")
                 card_disk1.card_clicked.connect(self.switch_page)
 
@@ -107,7 +110,6 @@ class MainWindow(QMainWindow):
                 card_cpu_temp = HardwareCard("CPU Temperature", mode="temp_only", icon_type="fan")
                 card_gpu_temp = HardwareCard("GPU Temperature", mode="temp_only", icon_type="fan")
                 card_processes = HardwareCard("Top 5 Processes", mode="processes", icon_type="processes")
-
                 card_disk2 = HardwareCard("DISK 2", mode="standard", icon_type="disk", click_target="disk")
                 card_disk2.card_clicked.connect(self.switch_page)
 
@@ -149,8 +151,8 @@ class MainWindow(QMainWindow):
 
                 self.content_stack.addWidget(page_container)
 
-            else:
-                # Create page container
+            elif section == 'gpu':
+                # Detailed GPU view
                 page_container = QWidget()
                 page_container.setAutoFillBackground(True)
                 pattern_pixmap = self.create_circuit_pattern()
@@ -159,34 +161,47 @@ class MainWindow(QMainWindow):
                 page_container.setPalette(palette)
 
                 page_layout = QVBoxLayout(page_container)
+                page_layout.setContentsMargins(0, 0, 0, 0)
 
-                # --- Back Button ---
-                back_button = QPushButton("← Back to Main")
-                back_button.setFixedSize(150, 40)
-                back_button.setCursor(Qt.PointingHandCursor)
-                back_button.setStyleSheet("""
-                    QPushButton {
-                        background-color: #2a2a2a;
-                        color: #4a9eff;
-                        border: 1px solid #4a9eff;
-                        border-radius: 8px;
-                        font-size: 14px;
-                        font-weight: bold;
-                    }
-                    QPushButton:hover {
-                        background-color: #4a9eff;
-                        color: #1a1a1a;
-                    }
-                """)
-                back_button.clicked.connect(lambda: self.switch_page('main'))
+                self.gpu_detail_view = GpuDetailView()
+                self.gpu_detail_view.back_button.clicked.connect(lambda: self.switch_page('main'))
+                page_layout.addWidget(self.gpu_detail_view)
 
-                page_layout.addWidget(back_button, alignment=Qt.AlignCenter)
-                page_layout.addSpacing(20)
+                self.content_stack.addWidget(page_container)
 
-                label = QLabel(f"{section.upper()} View - Coming Soon")
-                label.setAlignment(Qt.AlignCenter)
-                label.setStyleSheet("color: #888; font-size: 18px;")
-                page_layout.addWidget(label)
+            elif section == 'ram':
+                # Detailed RAM view
+                page_container = QWidget()
+                page_container.setAutoFillBackground(True)
+                pattern_pixmap = self.create_circuit_pattern()
+                palette = QPalette()
+                palette.setBrush(QPalette.Window, QBrush(pattern_pixmap))
+                page_container.setPalette(palette)
+
+                page_layout = QVBoxLayout(page_container)
+                page_layout.setContentsMargins(0, 0, 0, 0)
+
+                self.ram_detail_view = RamDetailView()
+                self.ram_detail_view.back_button.clicked.connect(lambda: self.switch_page('main'))
+                page_layout.addWidget(self.ram_detail_view)
+
+                self.content_stack.addWidget(page_container)
+
+            elif section == 'disk':
+                # Detailed Disk view
+                page_container = QWidget()
+                page_container.setAutoFillBackground(True)
+                pattern_pixmap = self.create_circuit_pattern()
+                palette = QPalette()
+                palette.setBrush(QPalette.Window, QBrush(pattern_pixmap))
+                page_container.setPalette(palette)
+
+                page_layout = QVBoxLayout(page_container)
+                page_layout.setContentsMargins(0, 0, 0, 0)
+
+                self.disk_detail_view = DiskDetailView()
+                self.disk_detail_view.back_button.clicked.connect(lambda: self.switch_page('main'))
+                page_layout.addWidget(self.disk_detail_view)
 
                 self.content_stack.addWidget(page_container)
 
@@ -240,7 +255,6 @@ class MainWindow(QMainWindow):
 
         pen = QPen(QColor("#252525"), 1)
         painter.setPen(pen)
-
         painter.drawLine(0, 25, 100, 25)
         painter.drawLine(0, 75, 100, 75)
         painter.drawLine(25, 0, 25, 100)
@@ -254,8 +268,8 @@ class MainWindow(QMainWindow):
 
         painter.drawLine(10, 10, 20, 20)
         painter.drawLine(80, 80, 90, 90)
-        painter.end()
 
+        painter.end()
         return pixmap
 
     def apply_dark_theme(self):

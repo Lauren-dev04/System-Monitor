@@ -8,7 +8,6 @@ import time
 
 def get_cpu_info():
     """Get CPU usage percentage, temperature, and model name."""
-
     # Get CPU usage (interval=0.5 means it takes 0.5 seconds to calculate)
     cpu_usage = psutil.cpu_percent(interval=0.5)
 
@@ -29,7 +28,6 @@ def get_cpu_info():
     try:
         # Try to get temperature sensors data
         temps = psutil.sensors_temperatures()
-
         if temps:
             # Check for Intel 'coretemp' or AMD 'k10temp'
             if 'coretemp' in temps:
@@ -41,7 +39,6 @@ def get_cpu_info():
                 for key in temps:
                     cpu_temp = temps[key][0].current
                     break
-
     except AttributeError:
         # sensors_temperatures() is not available on this OS
         pass
@@ -56,12 +53,10 @@ def get_cpu_info():
 
 def get_cpu_detailed_info():
     """Get detailed per-core CPU info: usage, frequency, temperature, VCore, cache sizes, uptime.
-
     All values are read from real sensors/sysfs. If a value isn't available on this
     hardware (e.g. VCore voltage), it's returned as None so the UI can show N/A
     instead of a fabricated number.
     """
-
     # --- Per-core usage (real, psutil) ---
     per_core_usage = psutil.cpu_percent(interval=0.3, percpu=True)
     overall_usage = sum(per_core_usage) / len(per_core_usage) if per_core_usage else 0
@@ -74,6 +69,7 @@ def get_cpu_detailed_info():
             per_core_freq = [f.current for f in freqs]
     except Exception:
         pass
+
     if not per_core_freq:
         try:
             f = psutil.cpu_freq()
@@ -102,7 +98,6 @@ def get_cpu_detailed_info():
                             pass
                     elif 'package' in label or 'tctl' in label or 'tdie' in label:
                         avg_temp = entry.current
-
                 if avg_temp is None:
                     if core_temps:
                         avg_temp = sum(core_temps) / len(core_temps)
@@ -121,7 +116,6 @@ def get_cpu_detailed_info():
                         label = f.read().strip().lower()
                 except Exception:
                     continue
-
                 if 'vcore' in label:
                     input_file = label_file.replace('_label', '_input')
                     if os.path.exists(input_file):
@@ -152,8 +146,7 @@ def get_cpu_detailed_info():
                             cache_type = f.read().strip()
                     with open(size_file) as f:
                         size = f.read().strip()
-
-                    key = f"l{level}"
+                    key = f"L{level}"
                     if cache_type == "Data":
                         key += "d"
                     elif cache_type == "Instruction":
@@ -183,7 +176,6 @@ def get_cpu_detailed_info():
 
 def get_ram_info():
     """Get RAM usage percentage, memory in GB, and type."""
-
     # Get virtual memory stats
     mem = psutil.virtual_memory()
 
@@ -217,9 +209,28 @@ def get_ram_info():
     }
 
 
+def get_ram_detailed_info():
+    """Get detailed RAM info including swap."""
+    ram_data = get_ram_info()
+
+    # Add swap info
+    try:
+        swap = psutil.swap_memory()
+        ram_data['swap_total_gb'] = round(swap.total / (1024 ** 3), 1)
+        ram_data['swap_used_gb'] = round(swap.used / (1024 ** 3), 1)
+        ram_data['swap_free_gb'] = round(swap.free / (1024 ** 3), 1)
+        ram_data['swap_percent'] = swap.percent
+    except Exception:
+        ram_data['swap_total_gb'] = 0
+        ram_data['swap_used_gb'] = 0
+        ram_data['swap_free_gb'] = 0
+        ram_data['swap_percent'] = 0
+
+    return ram_data
+
+
 def get_gpu_info():
     """Get GPU usage, temperature, VRAM, and model name with fallback methods."""
-
     # Default values in case everything fails
     gpu_data = {
         'usage': 0,
@@ -234,21 +245,17 @@ def get_gpu_info():
         import pyrsmi
         # Initialize the library
         pyrsmi.amdsmi_init()
-
         # Get the first GPU (usually the only one in desktop PCs)
         processors = pyrsmi.amdsmi_get_processor_handles()
         if processors:
             gpu = processors[0]
-
             # Get metrics
             gpu_data['usage'] = pyrsmi.amdsmi_get_gpu_activity(gpu)['gfx_activity']
-            gpu_data['temp'] = pyrsmi.amdsmi_get_temp_metric(gpu, 1, 0)['current'] # Edge temp
+            gpu_data['temp'] = pyrsmi.amdsmi_get_temp_metric(gpu, 1, 0)['current']  # Edge temp
             gpu_data['model'] = pyrsmi.amdsmi_get_gpu_vendor_name(gpu)
-
         # Shutdown the library to free resources
         pyrsmi.amdsmi_shut_down()
         return gpu_data
-
     except Exception:
         # pyrsmi failed or is not installed, try Method 2
         pass
@@ -258,7 +265,6 @@ def get_gpu_info():
         # Find all GPU devices in the system
         drm_path = "/sys/class/drm/card*/device"
         gpu_paths = glob.glob(drm_path)
-
         for path in gpu_paths:
             # 1. Get GPU Usage
             usage_file = os.path.join(path, "gpu_busy_percent")
@@ -277,7 +283,6 @@ def get_gpu_info():
             # 3. Get VRAM
             vram_used_file = os.path.join(path, "mem_info_vram_used")
             vram_total_file = os.path.join(path, "mem_info_vram_total")
-
             if os.path.exists(vram_used_file) and os.path.exists(vram_total_file):
                 with open(vram_used_file, 'r') as f:
                     gpu_data['vram_used_mb'] = round(int(f.read().strip()) / (1024**2), 1)
@@ -308,7 +313,6 @@ def get_gpu_info():
 
             # Break after the first valid GPU found
             break
-
     except Exception:
         # Native method failed, return default values
         pass
@@ -316,15 +320,50 @@ def get_gpu_info():
     return gpu_data
 
 
+def get_gpu_detailed_info():
+    """Get detailed GPU info including usage, temperature, VRAM, and model."""
+    # Reuse get_gpu_info() and add more details
+    gpu_data = get_gpu_info()
+
+    # Add GPU frequency if available
+    gpu_freq = None
+    try:
+        # Try to read frequency from sysfs
+        drm_path = "/sys/class/drm/card*/device"
+        gpu_paths = glob.glob(drm_path)
+        for path in gpu_paths:
+            freq_file = os.path.join(path, "pp_dpm_sclk")
+            if os.path.exists(freq_file):
+                with open(freq_file, 'r') as f:
+                    lines = f.readlines()
+                    # The active line has an asterisk
+                    for line in lines:
+                        if '*' in line:
+                            # Extract frequency (e.g., "0: 500Mhz *")
+                            parts = line.split(':')
+                            if len(parts) > 1:
+                                freq_str = parts[1].strip().split('Mhz')[0].strip()
+                                try:
+                                    gpu_freq = int(freq_str)
+                                except Exception:
+                                    pass
+                            break
+                break
+    except Exception:
+        pass
+
+    gpu_data['frequency_mhz'] = gpu_freq
+
+    return gpu_data
+
+
 def get_all_disks_info():
     """Get information about all physical disks in the system."""
-
     disks_dict = {}  # Dictionary to group partitions by physical disk
     bytes_to_gb = 1024 ** 3
 
     # Get all disk partitions
     partitions = psutil.disk_partitions()
-
     for partition in partitions:
         # Skip virtual filesystems
         if partition.fstype not in ['ext4', 'xfs', 'btrfs', 'ntfs', 'fat32', 'vfat']:
@@ -333,7 +372,6 @@ def get_all_disks_info():
         try:
             # Extract physical disk name (e.g., /dev/sda1 -> sda, /dev/nvme0n1p2 -> nvme0n1)
             device = partition.device.split('/')[-1]
-
             # Remove partition numbers to get the base disk name
             # For /dev/sda1 -> sda, /dev/nvme0n1p2 -> nvme0n1
             disk_name = device.rstrip('0123456789')
@@ -393,11 +431,33 @@ def get_all_disks_info():
     return disks
 
 
+def get_disk_detailed_info():
+    """Get detailed disk info including I/O stats if available."""
+    disks = get_all_disks_info()
+
+    # Add I/O statistics for each disk
+    try:
+        disk_io = psutil.disk_io_counters(perdisk=True)
+        for disk in disks:
+            disk_name = disk['disk_name']
+            if disk_name in disk_io:
+                io = disk_io[disk_name]
+                disk['read_mb'] = round(io.read_bytes / (1024 ** 2), 1)
+                disk['write_mb'] = round(io.write_bytes / (1024 ** 2), 1)
+            else:
+                disk['read_mb'] = 0
+                disk['write_mb'] = 0
+    except Exception:
+        for disk in disks:
+            disk['read_mb'] = 0
+            disk['write_mb'] = 0
+
+    return disks
+
+
 def get_top_processes(count=5):
     """Get the top N processes by memory usage."""
-
     processes = []
-
     try:
         # Iterate over all running processes
         for proc in psutil.process_iter(['name', 'memory_info']):
@@ -405,11 +465,9 @@ def get_top_processes(count=5):
                 # Get process info
                 name = proc.info['name']
                 memory_info = proc.info['memory_info']
-
                 if name and memory_info:
                     # Convert bytes to MB
                     memory_mb = round(memory_info.rss / (1024 ** 2), 1)
-
                     processes.append({
                         'name': name,
                         'memory_mb': memory_mb
@@ -421,7 +479,6 @@ def get_top_processes(count=5):
         # Sort by memory usage (descending) and take top N
         processes.sort(key=lambda x: x['memory_mb'], reverse=True)
         return processes[:count]
-
     except Exception:
         return []
 
@@ -433,7 +490,6 @@ _process_cache = {}
 
 def get_detailed_processes(count=8):
     """Get top processes with CPU%, memory, thread count and status (real-time, non-blocking).
-
     Uses a persistent Process object cache instead of interval sleeps, so it's
     cheap enough to call every monitoring cycle.
     """
@@ -477,7 +533,6 @@ def get_detailed_processes(count=8):
 
 def get_fan_info():
     """Get fan speeds in RPM from system sensors."""
-
     fan_data = {
         'cpu_fan_rpm': None,
         'gpu_fan_rpm': None,
@@ -486,7 +541,6 @@ def get_fan_info():
 
     try:
         fans = psutil.sensors_fans()
-
         if fans:
             # GPU fan (AMD)
             if 'amdgpu' in fans:
@@ -495,7 +549,6 @@ def get_fan_info():
 
             # Collect all motherboard fans
             mobo_fans = []
-
             # Check nct6796 (your motherboard chip)
             if 'nct6796' in fans:
                 for entry in fans['nct6796']:
@@ -514,11 +567,11 @@ def get_fan_info():
                 fan_data['cpu_fan_rpm'] = mobo_fans[0]
             if len(mobo_fans) > 1:
                 fan_data['system_fan_rpm'] = mobo_fans[1]
-
     except Exception as e:
         print(f"Error reading fan sensors: {e}")
 
     return fan_data
+
 
 # --- TEST BLOCK ---
 # This code runs only if you execute this file directly
@@ -529,7 +582,6 @@ if __name__ == "__main__":
     print(f"CPU Model: {cpu['model']}")
     print(f"CPU Usage: {cpu['usage']}%")
     print(f"CPU Temp:  {cpu['temp']}°C")
-
     print("")  # Empty line separator
 
     # Test detailed CPU info
@@ -543,10 +595,9 @@ if __name__ == "__main__":
     print(f"VCore:          {detail['vcore']}")
     print(f"Cache sizes:    {detail['cache_sizes']}")
     print(f"Uptime (s):     {detail['uptime_seconds']}")
-
     print("")  # Empty line separator
 
-    #test Fan info
+    # Test Fan info
     print("Testing Fan info...")
     fans = get_fan_info()
     print(f"CPU Fan:  {fans['cpu_fan_rpm']} RPM" if fans['cpu_fan_rpm'] else "CPU Fan: N/A")
@@ -561,7 +612,6 @@ if __name__ == "__main__":
     print(f"RAM Total: {ram['total_gb']} GB")
     print(f"RAM Used:  {ram['used_gb']} GB")
     print(f"RAM Free:  {ram['free_gb']} GB")
-
     print("")  # Empty line separator
 
     # Test GPU info
@@ -572,7 +622,6 @@ if __name__ == "__main__":
     print(f"GPU Temp:      {gpu['temp']}°C")
     print(f"GPU VRAM Used: {gpu['vram_used_mb']} MB")
     print(f"GPU VRAM Total:{gpu['vram_total_mb']} MB")
-
     print("")  # Empty line separator
 
     # Test All Disks info
@@ -590,7 +639,6 @@ if __name__ == "__main__":
     top_procs = get_top_processes(5)
     for i, proc in enumerate(top_procs, 1):
         print(f"{i}. {proc['name']}: {proc['memory_mb']} MB")
-
     print("")  # Empty line separator
 
     # Test Detailed Processes (call twice, second call has real CPU% deltas)

@@ -4,7 +4,9 @@ from PySide6.QtCore import QThread, Signal
 # Import hardware monitoring functions
 from .monitor import (get_cpu_info, get_gpu_info, get_ram_info,
                       get_all_disks_info, get_top_processes, get_fan_info,
-                      get_cpu_detailed_info, get_detailed_processes)
+                      get_cpu_detailed_info, get_detailed_processes,
+                      get_gpu_detailed_info, get_ram_detailed_info,
+                      get_disk_detailed_info)
 
 
 class MonitorThread(QThread):
@@ -18,8 +20,11 @@ class MonitorThread(QThread):
     fans_data = Signal(dict)
     processes_data = Signal(list)
 
-    # New signals for the detailed CPU view
+    # New signals for the detailed views
     cpu_detail_data = Signal(dict)
+    gpu_detail_data = Signal(dict)
+    ram_detail_data = Signal(dict)
+    disk_detail_data = Signal(list)
     processes_detail_data = Signal(list)
 
     def __init__(self):
@@ -31,6 +36,7 @@ class MonitorThread(QThread):
         """Main loop that runs in the background thread."""
         # Counter for processes update (update less frequently)
         process_counter = 0
+        detail_counter = 0
 
         while self._running:
             # Collect and emit CPU data
@@ -82,6 +88,32 @@ class MonitorThread(QThread):
                 self.processes_detail_data.emit(processes_detail)
             except Exception as e:
                 print(f"Error collecting detailed processes data: {e}")
+
+            # Collect detailed views data (every 2 seconds to reduce load)
+            detail_counter += 1
+            if detail_counter >= 2:
+                # Detailed GPU data
+                try:
+                    gpu_detail = get_gpu_detailed_info()
+                    self.gpu_detail_data.emit(gpu_detail)
+                except Exception as e:
+                    print(f"Error collecting detailed GPU data: {e}")
+
+                # Detailed RAM data
+                try:
+                    ram_detail = get_ram_detailed_info()
+                    self.ram_detail_data.emit(ram_detail)
+                except Exception as e:
+                    print(f"Error collecting detailed RAM data: {e}")
+
+                # Detailed disk data
+                try:
+                    disk_detail = get_disk_detailed_info()
+                    self.disk_detail_data.emit(disk_detail)
+                except Exception as e:
+                    print(f"Error collecting detailed disk data: {e}")
+
+                detail_counter = 0
 
             # Update simple top-5-by-memory processes every 5 seconds (less frequent)
             process_counter += 1
